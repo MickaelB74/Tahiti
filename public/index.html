@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Tahiti & Moorea — Travel Planner</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+  <!-- App -->
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ═══ MAP VIEW ═══ -->
+  <div id="v-map" class="view active">
+    <div id="map"></div>
+    <div class="map-top">
+      <button class="map-search-btn" id="btn-map-search">
+        🔍 <span>Rechercher un lieu…</span>
+      </button>
+      <div class="map-pill" id="map-counter">0/0</div>
+    </div>
+    <button class="map-recenter" id="btn-recenter" title="Recentrer">🎯</button>
+    <button class="fab" id="btn-fab">+</button>
+  </div>
+
+  <!-- ═══ SEARCH VIEW ═══ -->
+  <div id="v-search" class="view">
+    <div class="search-hdr">
+      <button class="search-back" id="btn-sback">←</button>
+      <div class="si-wrap">
+        <input id="sinput" type="text" placeholder="Plage, restaurant, randonnée…">
+        <button class="sclear" id="btn-sclear">✕</button>
+      </div>
+    </div>
+    <div class="sresults" id="sresults">
+      <div class="shint">
+        <div class="si">🌺</div>
+        <div class="st">Explorer Tahiti & Moorea</div>
+        <div class="ss">
+          Tapez un nom de lieu, plage, restaurant…<br><br>
+          💡 <em>Temae, Roulottes Papeete, Faarumai, Belvedere…</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ LIST VIEW ═══ -->
+  <div id="v-list" class="view">
+    <div class="lhdr">
+      <div class="ltitle">Ma liste</div>
+      <div class="lsub" id="lsub">0 lieu</div>
+      <div class="lprog"><div class="lprog-fill" id="lprog"></div></div>
+    </div>
+    <div class="lfilters" id="lfilters">
+      <button class="chip active" data-f="all">Tous</button>
+      <button class="chip" data-f="todo">À faire</button>
+      <button class="chip" data-f="done">Fait ✓</button>
+    </div>
+    <div class="lscroll" id="lscroll"></div>
+  </div>
+
+  <!-- ═══ BOTTOM NAV ═══ -->
+  <div class="bnav">
+    <button class="nb active" data-v="map" id="nav-map">
+      <span class="ni">🗺️</span>Carte
+    </button>
+    <button class="nb" data-v="list" id="nav-list">
+      <span class="ni">📋</span>Ma liste
+    </button>
+    <button class="nb" data-v="search" id="nav-search">
+      <span class="ni">🔍</span>Explorer
+    </button>
+  </div>
+
+</div>
+
+<!-- ═══ DETAIL OVERLAY + SHEET ═══ -->
+<div class="overlay" id="det-ov"></div>
+<div class="sheet" id="det-sh">
+  <div class="shandle"></div>
+  <div id="det-body"></div>
+</div>
+
+<!-- ═══ CATEGORY MODAL ═══ -->
+<div class="cat-ov" id="cat-ov"></div>
+<div class="cat-sh" id="cat-sh">
+  <div class="ctitle">Catégorie</div>
+  <div class="csub" id="cat-sub"></div>
+  <div class="cgrid" id="cat-grid"></div>
+</div>
+
+<!-- ═══ TOAST ═══ -->
+<div class="toast" id="toast"></div>
+
+<!-- App logic -->
+<script src="/app.js"></script>
+
+</body>
+</html>
