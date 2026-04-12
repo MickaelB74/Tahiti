@@ -19,7 +19,7 @@ var CATS = [
 var CAT_TAGS = {
   beach:      [['natural','beach']],
   restaurant: [['amenity','restaurant'],['amenity','bar'],['amenity','cafe'],['amenity','fast_food'],['amenity','pub']],
-  hike:       [['highway','path'],['natural','peak'],['route','hiking']],
+  hike:       [['natural','peak'],['route','hiking']],
   culture:    [['tourism','museum'],['amenity','place_of_worship'],['historic','archaeological_site'],['historic','memorial'],['historic','ruins']],
   snorkel:    [['sport','scuba_diving'],['sport','snorkeling'],['leisure','dive_centre']],
   viewpoint:  [['tourism','viewpoint']],
@@ -42,17 +42,19 @@ var ISLANDS = {
 };
 
 var places = [];
-var history = [];
+var archiveData = [];
 var map, markersLayer, searchLayer;
 var curView = 'map';
 var mapMode = 'mine';        // 'mine' | 'explore'
 var islandFilter = 'all';    // 'all' | 'tahiti' | 'moorea'
 var catFilter = 'all';
-var listF = 'all';
+var listF = 'todo';
 var sTimer = null;
 var sData = [];
 var pending = null;
 var searching = false;
+var addingCustom = false;
+var customMarker = null;
 var HKEY = 'tahiti-history-v1';
 
 /* ── Storage ── */
@@ -67,13 +69,13 @@ function load() {
   });
   try {
     var h = localStorage.getItem(HKEY);
-    if (h) history = JSON.parse(h);
+    if (h) archiveData = JSON.parse(h);
   } catch (e) { }
   refreshAll();
 }
 
 function saveHistory() {
-  try { localStorage.setItem(HKEY, JSON.stringify(history)); } catch (e) { }
+  try { localStorage.setItem(HKEY, JSON.stringify(archiveData)); } catch (e) { }
 }
 
 function save() {
@@ -107,8 +109,9 @@ function setMapMode(mode) {
 
   /* Show / hide elements */
   document.getElementById('map-search').classList.toggle('visible', mode === 'explore');
-  document.getElementById('map-counter').style.display = mode === 'mine' ? '' : 'none';
   document.getElementById('map-results').classList.toggle('visible', mode === 'explore');
+  document.getElementById('btn-addcustom').style.display = mode === 'mine' ? '' : 'none';
+  if (mode === 'explore') cancelAddCustom();
 
   /* Reset category filter */
   catFilter = 'all';
@@ -131,7 +134,6 @@ function refreshMap() {
 
   if (mapMode === 'mine') {
     renderMineMarkers();
-    updateCounter();
   } else {
     renderSearchMarkers();
     renderResultsPanel();
@@ -218,45 +220,6 @@ function getFilteredResults() {
   return sData.filter(function (r) {
     return r._forceCat === catFilter || guessCat(r) === catFilter;
   });
-}
-
-/* ── Recenter ── */
-
-function recenter() {
-  if (mapMode === 'mine') {
-    var visible = places.filter(function (p) {
-      if (!placeMatchesIsland(p)) return false;
-      if (catFilter !== 'all' && p.category !== catFilter) return false;
-      return true;
-    });
-    if (visible.length) {
-      map.fitBounds(
-        L.latLngBounds(visible.map(function (p) { return [p.lat, p.lng]; })),
-        { padding: [50, 50], maxZoom: 14 }
-      );
-    } else {
-      map.setView(ISLANDS[islandFilter].center, ISLANDS[islandFilter].zoom);
-    }
-  } else {
-    var filtered = getFilteredResults();
-    if (filtered.length) {
-      map.fitBounds(
-        L.latLngBounds(filtered.map(function (r) { return [parseFloat(r.lat), parseFloat(r.lon)]; })),
-        { padding: [50, 50], maxZoom: 14 }
-      );
-    } else {
-      map.setView(ISLANDS[islandFilter].center, ISLANDS[islandFilter].zoom);
-    }
-  }
-}
-
-/* ── Counter (mode Mes lieux) ── */
-
-function updateCounter() {
-  var filtered = places.filter(function (p) { return placeMatchesIsland(p); });
-  var v = filtered.filter(function (p) { return p.visited; }).length;
-  document.getElementById('map-counter').textContent =
-    v + '/' + filtered.length + ' visité' + (v > 1 ? 's' : '');
 }
 
 /* ── Island filter ── */
@@ -358,19 +321,21 @@ function inBbox(r) {
    Overpass API (recherche par catégorie)
    ══════════════════════════════════════ */
 
+/* Catégories qui nécessitent aussi les 'way' (zones, routes) */
+var CAT_NEEDS_WAY = { beach: true, hike: true, snorkel: true };
+
 function buildOverpassQuery(catId, bboxObj) {
   var bb = bboxObj;
   var bboxStr = bb.latMin + ',' + bb.lngMin + ',' + bb.latMax + ',' + bb.lngMax;
   var tags = CAT_TAGS[catId] || [];
+  var needWay = CAT_NEEDS_WAY[catId];
   var parts = [];
   tags.forEach(function (tag) {
-    var filter = tag.length === 1
-      ? '["' + tag[0] + '"]'
-      : '["' + tag[0] + '"="' + tag[1] + '"]';
+    var filter = '["' + tag[0] + '"="' + tag[1] + '"]';
     parts.push('node' + filter + '(' + bboxStr + ');');
-    parts.push('way' + filter + '(' + bboxStr + ');');
+    if (needWay) parts.push('way' + filter + '(' + bboxStr + ');');
   });
-  return '[out:json][timeout:30];(' + parts.join('') + ');out center;';
+  return '[out:json][timeout:15];(' + parts.join('') + ');out center qt 300;';
 }
 
 function normalizeOverpassResult(el, forceCat) {
@@ -405,54 +370,121 @@ function normalizeOverpassResult(el, forceCat) {
   };
 }
 
-function overpassSearch(catId) {
-  /* Quand "Tout" (les 2 îles) → 2 requêtes parallèles sur des bbox serrées */
-  var boxes = islandFilter === 'all'
-    ? [ISLANDS.tahiti, ISLANDS.moorea]
-    : [ISLANDS[islandFilter]];
+/* ── Overpass : cache, abort, fallback ── */
 
-  var urls = boxes.map(function (bb) {
-    var query = buildOverpassQuery(catId, bb);
-    return 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
-  });
+var OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter'
+];
+var overpassCache = {};          /* clé = catId + '|' + islandFilter → résultats normalisés */
+var overpassAbort = null;        /* AbortController de la requête en cours */
+
+function overpassCacheKey(catId) {
+  return catId + '|' + islandFilter;
+}
+
+function fetchWithFallback(query, signal) {
+  var encoded = encodeURIComponent(query);
+  return fetch(OVERPASS_SERVERS[0] + '?data=' + encoded, { signal: signal })
+    .then(function (r) {
+      if (r.status === 429 || r.status === 504) throw new Error(r.status);
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    })
+    .catch(function (err) {
+      if (err.name === 'AbortError') throw err;
+      /* Fallback serveur secondaire */
+      return fetch(OVERPASS_SERVERS[1] + '?data=' + encoded, { signal: signal })
+        .then(function (r) {
+          if (!r.ok) throw new Error(r.status);
+          return r.json();
+        });
+    });
+}
+
+function overpassSearch(catId) {
+  /* Annuler la requête précédente en cours */
+  if (overpassAbort) {
+    overpassAbort.abort();
+    overpassAbort = null;
+  }
+
+  /* Cache hit → résultat instantané */
+  var ck = overpassCacheKey(catId);
+  if (overpassCache[ck]) {
+    sData = overpassCache[ck].slice();
+    /* Filtre texte si besoin */
+    var qt = (document.getElementById('sinput').value || '').trim().toLowerCase();
+    if (qt.length >= 2) {
+      sData = sData.filter(function (r) {
+        return r.display_name.toLowerCase().indexOf(qt) >= 0;
+      });
+    }
+    searching = false;
+    refreshMap();
+    return;
+  }
+
+  /* Bbox unique englobant les deux îles pour « all » — une seule requête */
+  var bb = ISLANDS[islandFilter];
+  var query = buildOverpassQuery(catId, bb);
 
   searching = true;
   renderResultsPanel();
 
-  Promise.all(
-    urls.map(function (u) {
-      return fetch(u).then(function (r) { return r.json(); }).catch(function () { return { elements: [] }; });
-    })
-  ).then(function (results) {
-    var allElements = [];
-    results.forEach(function (data) {
-      allElements = allElements.concat(data.elements || []);
-    });
-    var seen = {};
-    sData = [];
-    allElements.forEach(function (el) {
-      var key = el.type + '_' + el.id;
-      if (seen[key]) return;
-      seen[key] = true;
-      var norm = normalizeOverpassResult(el, catId);
-      if (norm) sData.push(norm);
-    });
+  var ctrl = new AbortController();
+  overpassAbort = ctrl;
 
-    /* Filtre texte si l'utilisateur a tapé quelque chose */
-    var q = (document.getElementById('sinput').value || '').trim().toLowerCase();
-    if (q.length >= 2) {
-      sData = sData.filter(function (r) {
-        return r.display_name.toLowerCase().indexOf(q) >= 0;
+  fetchWithFallback(query, ctrl.signal)
+    .then(function (data) {
+      overpassAbort = null;
+      var elements = data.elements || [];
+
+      /* Pour « all », filtrer client-side par bbox stricte de chaque île */
+      if (islandFilter === 'all') {
+        elements = elements.filter(function (el) {
+          var lat = el.lat || (el.center && el.center.lat);
+          var lon = el.lon || (el.center && el.center.lon);
+          if (!lat || !lon) return false;
+          var t = ISLANDS.tahiti;
+          var m = ISLANDS.moorea;
+          return (lat >= t.latMin && lat <= t.latMax && lon >= t.lngMin && lon <= t.lngMax) ||
+                 (lat >= m.latMin && lat <= m.latMax && lon >= m.lngMin && lon <= m.lngMax);
+        });
+      }
+
+      var seen = {};
+      var normalized = [];
+      elements.forEach(function (el) {
+        var key = el.type + '_' + el.id;
+        if (seen[key]) return;
+        seen[key] = true;
+        var norm = normalizeOverpassResult(el, catId);
+        if (norm) normalized.push(norm);
       });
-    }
 
-    searching = false;
-    refreshMap();
-  }).catch(function () {
-    searching = false;
-    document.getElementById('map-results').innerHTML =
-      '<div class="sloading">Erreur réseau. Vérifiez votre connexion.</div>';
-  });
+      /* Stocker en cache */
+      overpassCache[ck] = normalized;
+      sData = normalized.slice();
+
+      /* Filtre texte si l'utilisateur a tapé quelque chose */
+      var q = (document.getElementById('sinput').value || '').trim().toLowerCase();
+      if (q.length >= 2) {
+        sData = sData.filter(function (r) {
+          return r.display_name.toLowerCase().indexOf(q) >= 0;
+        });
+      }
+
+      searching = false;
+      refreshMap();
+    })
+    .catch(function (err) {
+      if (err.name === 'AbortError') return;
+      overpassAbort = null;
+      searching = false;
+      document.getElementById('map-results-inner').innerHTML =
+        '<div class="sloading">Erreur réseau. Réessayez dans quelques secondes.</div>';
+    });
 }
 
 /* ══════════════════════════════════════
@@ -460,46 +492,32 @@ function overpassSearch(catId) {
    ══════════════════════════════════════ */
 
 function doSearch(q) {
-  var base = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=fr&limit=30';
+  var base = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=fr&limit=40';
   var bb = ISLANDS[islandFilter];
   /* Nominatim viewbox : west,north,east,south */
   var vb = '&viewbox=' + bb.lngMin + ',' + bb.latMax + ',' + bb.lngMax + ',' + bb.latMin;
-
-  var urls = [
-    /* 1. Recherche géographique stricte dans la bbox */
-    base + vb + '&bounded=1&q=' + encodeURIComponent(q)
-  ];
-  /* 2. Fallback avec nom d'île (pour les lieux mal géocodés) */
-  if (islandFilter === 'all' || islandFilter === 'tahiti') {
-    urls.push(base + '&q=' + encodeURIComponent(q + ' Tahiti'));
-  }
-  if (islandFilter === 'all' || islandFilter === 'moorea') {
-    urls.push(base + '&q=' + encodeURIComponent(q + ' Moorea'));
-  }
+  var url = base + vb + '&bounded=1&q=' + encodeURIComponent(q);
 
   searching = true;
 
-  Promise.all(
-    urls.map(function (u) {
-      return fetch(u).then(function (r) { return r.json(); }).catch(function () { return []; });
-    })
-  ).then(function (arrays) {
-    var all = [].concat.apply([], arrays);
-    var seen = {}, res = [];
-    all.forEach(function (r) {
-      if (r && r.place_id && !seen[r.place_id] && inBbox(r)) {
-        seen[r.place_id] = true;
-        res.push(r);
-      }
+  fetch(url)
+    .then(function (r) { return r.json(); })
+    .then(function (all) {
+      var seen = {}, res = [];
+      all.forEach(function (r) {
+        if (r && r.place_id && !seen[r.place_id] && inBbox(r)) {
+          seen[r.place_id] = true;
+          res.push(r);
+        }
+      });
+      sData = res;
+      searching = false;
+      refreshMap();
+    }).catch(function () {
+      searching = false;
+      document.getElementById('map-results-inner').innerHTML =
+        '<div class="sloading">Erreur réseau. Vérifiez votre connexion.</div>';
     });
-    sData = res;
-    searching = false;
-    refreshMap();
-  }).catch(function () {
-    searching = false;
-    document.getElementById('map-results').innerHTML =
-      '<div class="sloading">Erreur réseau. Vérifiez votre connexion.</div>';
-  });
 }
 
 /* ── Guess category from Nominatim data ── */
@@ -531,7 +549,7 @@ function getIsland(r) {
 /* ── Results panel (explore mode) ── */
 
 function renderResultsPanel() {
-  var el = document.getElementById('map-results');
+  var el = document.getElementById('map-results-inner');
 
   /* Loading indicator */
   if (searching) {
@@ -713,6 +731,8 @@ function openDetail(id) {
   }
   if (!p) return;
   var c = gc(p.category);
+  var mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + p.lat + ',' + p.lng;
+
   document.getElementById('det-body').innerHTML =
     '<div class="dhero" style="background:linear-gradient(135deg,' + c.color + '30,' + c.color + '10)">' +
     '<span style="font-size:56px">' + c.icon + '</span>' +
@@ -734,26 +754,14 @@ function openDetail(id) {
     '<div class="dsec"><div class="dsec-t">📍 Coordonnées GPS</div>' +
     '<div class="drow">🌐 ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</div>' +
     '<div class="drow">🏝️ Île : <strong style="margin-left:4px">' + p.island + '</strong></div></div>' +
-    '<div class="dsec"><div class="dsec-t">🧭 Navigation</div>' +
-    '<a href="https://www.google.com/maps/search/?api=1&query=' + p.lat + ',' + p.lng + '" ' +
-    'target="_blank" rel="noopener" ' +
-    'style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#e8f4fd;border-radius:12px;text-decoration:none;color:#0077B6;font-weight:600;font-size:13px">' +
-    '🗺️ Ouvrir dans Google Maps</a></div>' +
     '<div class="dacts">' +
-    '<button class="dbtn ' + (p.visited ? 'dbtn-p' : 'dbtn-s') + '" id="btn-dtoggle">' +
-    (p.visited ? '↩ Non visité' : '✓ Marquer visité') + '</button>' +
+    '<a href="' + mapsUrl + '" target="_blank" rel="noopener" class="dbtn dbtn-p" style="text-decoration:none">🗺️ Ouvrir Maps</a>' +
     '<button class="dbtn dbtn-d" id="btn-dremove">🗑️</button></div></div>';
 
   document.getElementById('det-ov').classList.add('open');
   document.getElementById('det-sh').classList.add('open');
 
   document.getElementById('btn-dclose').addEventListener('click', closeDetail);
-  document.getElementById('btn-dtoggle').addEventListener('click', function () {
-    p.visited = !p.visited;
-    save();
-    refreshAll();
-    openDetail(id);
-  });
   document.getElementById('btn-dremove').addEventListener('click', function () {
     places = places.filter(function (x) { return x.id !== id; });
     save();
@@ -761,6 +769,7 @@ function openDetail(id) {
     refreshAll();
     showToast('Lieu supprimé');
   });
+
 }
 
 function closeDetail() {
@@ -837,12 +846,15 @@ function renderDay() {
   document.getElementById('dprog').style.width =
     dayPlaces.length ? (done / dayPlaces.length * 100) + '%' : '0%';
 
+  var archiveBtn = document.getElementById('btn-archive');
+
   var el = document.getElementById('dscroll');
   if (!dayPlaces.length) {
     el.innerHTML =
       '<div class="empty"><div class="ei">☀️</div>' +
       '<div class="et">Journée vide</div>' +
       '<div class="es">Dans <strong>Ma liste</strong>, appuyez sur<br><em>+ Journée</em> pour planifier un lieu.</div></div>';
+    if (archiveBtn) archiveBtn.style.display = 'none';
     return;
   }
 
@@ -895,7 +907,6 @@ function renderDay() {
   });
 
   /* Archive button */
-  var archiveBtn = document.getElementById('btn-archive');
   if (archiveBtn) {
     var visitedInDay = dayPlaces.filter(function (p) { return p.visited; });
     archiveBtn.style.display = visitedInDay.length ? 'flex' : 'none';
@@ -914,8 +925,9 @@ function archiveDay() {
     return;
   }
   var today = new Date().toISOString().slice(0, 10);
+  var archivedIds = {};
   dayPlaces.forEach(function (p) {
-    history.unshift({
+    archiveData.unshift({
       id: p.id,
       name: p.name,
       lat: p.lat,
@@ -925,8 +937,11 @@ function archiveDay() {
       category: p.category,
       archivedAt: today
     });
+    archivedIds[p.id] = true;
+  });
+  /* Retirer de la journée mais garder dans la liste */
+  dayPlaces.forEach(function (p) {
     p.inDay = false;
-    p.visited = false;
   });
   saveHistory();
   save();
@@ -938,17 +953,20 @@ function archiveDay() {
 
 function renderHistory() {
   var el = document.getElementById('hscroll');
-  if (!history.length) {
+  var clearBtn = document.getElementById('btn-hclear');
+  if (!archiveData.length) {
     el.innerHTML =
       '<div class="empty"><div class="ei">📖</div>' +
       '<div class="et">Pas encore d\'historique</div>' +
       '<div class="es">Archivez votre journée pour<br>retrouver vos visites ici.</div></div>';
+    if (clearBtn) clearBtn.style.display = 'none';
     return;
   }
+  if (clearBtn) clearBtn.style.display = 'flex';
 
   /* Group by date */
   var grouped = {};
-  history.forEach(function (h) {
+  archiveData.forEach(function (h) {
     var d = h.archivedAt || 'Inconnu';
     if (!grouped[d]) grouped[d] = [];
     grouped[d].push(h);
@@ -983,6 +1001,159 @@ function formatHistoryDate(dateStr) {
   return parseInt(parts[2]) + ' ' + months[parseInt(parts[1]) - 1] + ' ' + parts[0];
 }
 
+/* ── Close results panel & abort ── */
+
+function closeResults() {
+  if (overpassAbort) { overpassAbort.abort(); overpassAbort = null; }
+  searching = false;
+  sData = [];
+  document.getElementById('sinput').value = '';
+  document.getElementById('btn-sclear').style.display = 'none';
+  catFilter = 'all';
+  document.querySelectorAll('.mfc').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-cat') === 'all');
+  });
+  refreshMap();
+}
+
+/* ── Clear history ── */
+
+function clearHistory() {
+  /* Retirer aussi de Ma liste les lieux qui étaient archivés */
+  var archivedIds = {};
+  archiveData.forEach(function (h) { archivedIds[h.id] = true; });
+  places = places.filter(function (p) { return !archivedIds[p.id]; });
+  save();
+  archiveData = [];
+  saveHistory();
+  refreshAll();
+  showToast('Historique vidé');
+}
+
+/* ── Confirm popup ── */
+
+var confirmCallback = null;
+
+function showConfirm(icon, title, msg, cb) {
+  document.getElementById('confirm-icon').textContent = icon;
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-msg').textContent = msg;
+  confirmCallback = cb;
+  document.getElementById('confirm-ov').classList.add('open');
+  document.getElementById('confirm-box').classList.add('open');
+}
+
+function closeConfirm() {
+  document.getElementById('confirm-ov').classList.remove('open');
+  document.getElementById('confirm-box').classList.remove('open');
+  confirmCallback = null;
+}
+
+/* ── Add custom place ── */
+
+function startAddCustom() {
+  addingCustom = true;
+  document.getElementById('custom-banner').classList.add('visible');
+  document.getElementById('btn-addcustom').style.display = 'none';
+  map.getContainer().style.cursor = 'crosshair';
+}
+
+function cancelAddCustom() {
+  addingCustom = false;
+  document.getElementById('custom-banner').classList.remove('visible');
+  document.getElementById('btn-addcustom').style.display = mapMode === 'mine' ? '' : 'none';
+  map.getContainer().style.cursor = '';
+  if (customMarker) { map.removeLayer(customMarker); customMarker = null; }
+}
+
+function onMapClickCustom(e) {
+  if (!addingCustom) return;
+  var lat = e.latlng.lat;
+  var lng = e.latlng.lng;
+
+  /* Placer/déplacer le marqueur temporaire */
+  if (customMarker) map.removeLayer(customMarker);
+  customMarker = L.marker([lat, lng], {
+    icon: L.divIcon({
+      className: '',
+      html: '<div class="cmark" style="background:var(--coral)"><span>📌</span></div>',
+      iconSize: [36, 36],
+      iconAnchor: [18, 36]
+    })
+  }).addTo(map);
+
+  /* Ouvrir le formulaire */
+  openCustomForm(lat, lng);
+}
+
+function openCustomForm(lat, lng) {
+  document.getElementById('custom-lat').value = lat;
+  document.getElementById('custom-lng').value = lng;
+  document.getElementById('custom-name').value = '';
+  document.getElementById('custom-ov').classList.add('open');
+  document.getElementById('custom-sh').classList.add('open');
+  setTimeout(function () { document.getElementById('custom-name').focus(); }, 200);
+
+  /* Remplir la grille catégories */
+  var g = document.getElementById('custom-cats');
+  var html = '';
+  CATS.forEach(function (c) {
+    html += '<button class="citem" data-cid="' + c.id + '">' +
+      '<span class="cic">' + c.icon + '</span><span class="cil">' + c.label + '</span></button>';
+  });
+  g.innerHTML = html;
+
+  /* Sélection catégorie */
+  var selectedCat = null;
+  g.querySelectorAll('.citem').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      g.querySelectorAll('.citem').forEach(function (b) { b.style.borderColor = '#e5e7eb'; b.style.background = '#fff'; });
+      var cid = this.getAttribute('data-cid');
+      var c = gc(cid);
+      this.style.borderColor = c.color;
+      this.style.background = c.color + '10';
+      selectedCat = cid;
+    });
+  });
+
+  /* Bouton valider */
+  document.getElementById('btn-custom-ok').onclick = function () {
+    var name = document.getElementById('custom-name').value.trim();
+    if (!name) { showToast('Entrez un nom'); return; }
+    if (!selectedCat) { showToast('Choisissez une catégorie'); return; }
+
+    /* Détection île */
+    var isl = 'Polynésie';
+    var mbb = ISLANDS.moorea;
+    var tbb = ISLANDS.tahiti;
+    if (lat >= mbb.latMin && lat <= mbb.latMax && lng >= mbb.lngMin && lng <= mbb.lngMax) isl = 'Moorea';
+    else if (lat >= tbb.latMin && lat <= tbb.latMax && lng >= tbb.lngMin && lng <= tbb.lngMax) isl = 'Tahiti';
+
+    places.unshift({
+      id: 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name: name,
+      lat: lat,
+      lng: lng,
+      address: '',
+      island: isl,
+      category: selectedCat,
+      visited: false,
+      inDay: false,
+      addedAt: Date.now()
+    });
+    save();
+    closeCustomForm();
+    cancelAddCustom();
+    refreshAll();
+    showToast('✓ ' + name + ' ajouté !');
+  };
+}
+
+function closeCustomForm() {
+  document.getElementById('custom-ov').classList.remove('open');
+  document.getElementById('custom-sh').classList.remove('open');
+}
+
 /* ── Toast ── */
 
 function showToast(msg) {
@@ -1007,6 +1178,18 @@ document.addEventListener('DOMContentLoaded', function () {
   initMap();
   load();
 
+  /* Custom place: map click + buttons */
+  map.on('click', onMapClickCustom);
+  document.getElementById('btn-addcustom').addEventListener('click', startAddCustom);
+  document.getElementById('btn-custom-cancel').addEventListener('click', function () {
+    closeCustomForm();
+    cancelAddCustom();
+  });
+  document.getElementById('custom-ov').addEventListener('click', function () {
+    closeCustomForm();
+    cancelAddCustom();
+  });
+
   /* Navigation onglets */
   document.querySelectorAll('.nb').forEach(function (b) {
     b.addEventListener('click', function () { showView(this.getAttribute('data-v')); });
@@ -1025,9 +1208,6 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!btn) return;
     setIslandFilter(btn.getAttribute('data-isl'));
   });
-
-  /* Recenter */
-  document.getElementById('btn-recenter').addEventListener('click', recenter);
 
   /* Category filter chips */
   document.getElementById('map-filters').addEventListener('click', function (e) {
@@ -1053,6 +1233,24 @@ document.addEventListener('DOMContentLoaded', function () {
     this.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
     chip.classList.add('active');
     renderList();
+  });
+
+  /* Close results panel */
+  document.getElementById('btn-rclose').addEventListener('click', closeResults);
+
+  /* Clear history with custom confirm */
+  document.getElementById('btn-hclear').addEventListener('click', function () {
+    showConfirm('🗑️', 'Vider l\'historique ?', 'Toutes vos visites archivées seront supprimées. Cette action est irréversible.', function () {
+      clearHistory();
+    });
+  });
+
+  /* Confirm popup buttons */
+  document.getElementById('confirm-cancel').addEventListener('click', closeConfirm);
+  document.getElementById('confirm-ov').addEventListener('click', closeConfirm);
+  document.getElementById('confirm-ok').addEventListener('click', function () {
+    if (confirmCallback) confirmCallback();
+    closeConfirm();
   });
 
   /* Overlay closes */
