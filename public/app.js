@@ -32,8 +32,6 @@ function gc(id) {
   return CATS.find(function (c) { return c.id === id; }) || CATS[CATS.length - 1];
 }
 
-var KEY = 'tahiti-v5';
-
 /* Bounding boxes par île */
 var ISLANDS = {
   all:    { center: [-17.6, -149.5],  zoom: 11, latMin: -18.0,  latMax: -17.3, lngMin: -150.2, lngMax: -149.0 },
@@ -55,31 +53,51 @@ var pending = null;
 var searching = false;
 var addingCustom = false;
 var customMarker = null;
-var HKEY = 'tahiti-history-v1';
 
-/* ── Storage ── */
+/* ── Storage (server-side) ── */
 
 function load() {
-  try {
-    var d = localStorage.getItem(KEY);
-    if (d) places = JSON.parse(d);
-  } catch (e) { }
-  places.forEach(function (p) {
-    if (p.inDay === undefined) p.inDay = false;
-  });
-  try {
-    var h = localStorage.getItem(HKEY);
-    if (h) archiveData = JSON.parse(h);
-  } catch (e) { }
-  refreshAll();
+  var loadedPlaces = false;
+  var loadedHistory = false;
+
+  function checkDone() {
+    if (loadedPlaces && loadedHistory) refreshAll();
+  }
+
+  fetch('/api/places')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (Array.isArray(data)) places = data;
+      places.forEach(function (p) {
+        if (p.inDay === undefined) p.inDay = false;
+      });
+    })
+    .catch(function () { })
+    .then(function () { loadedPlaces = true; checkDone(); });
+
+  fetch('/api/history')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (Array.isArray(data)) archiveData = data;
+    })
+    .catch(function () { })
+    .then(function () { loadedHistory = true; checkDone(); });
 }
 
 function saveHistory() {
-  try { localStorage.setItem(HKEY, JSON.stringify(archiveData)); } catch (e) { }
+  fetch('/api/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(archiveData)
+  }).catch(function () { });
 }
 
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(places)); } catch (e) { }
+  fetch('/api/places', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(places)
+  }).catch(function () { });
 }
 
 /* ── Map init ── */
