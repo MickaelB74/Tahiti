@@ -54,37 +54,82 @@ var searching = false;
 var addingCustom = false;
 var customMarker = null;
 
-/* ── Storage (server-side) ── */
+/* ── Storage (localStorage + server) ── */
+
+var LS_PLACES  = 'tahiti_places';
+var LS_HISTORY = 'tahiti_history';
+
+function lsGet(key) {
+  try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch(e) { return null; }
+}
+
+function lsSet(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+}
 
 function load() {
-  var loadedPlaces = false;
-  var loadedHistory = false;
+  /* 1. Charger depuis localStorage immédiatement (affichage instantané) */
+  var lsPlaces = lsGet(LS_PLACES);
+  if (Array.isArray(lsPlaces) && lsPlaces.length) {
+    places = lsPlaces;
+    places.forEach(function (p) { if (p.inDay === undefined) p.inDay = false; });
+  }
+  var lsHistory = lsGet(LS_HISTORY);
+  if (Array.isArray(lsHistory)) archiveData = lsHistory;
 
-  function checkDone() {
-    if (loadedPlaces && loadedHistory) refreshAll();
+  refreshAll();
+
+  /* 2. Synchroniser avec le serveur en arrière-plan */
+  var syncedPlaces = false;
+  var syncedHistory = false;
+
+  function checkSync() {
+    if (!syncedPlaces || !syncedHistory) return;
+    /* Le serveur a des données → elles font autorité (session multi-appareils) */
+    lsSet(LS_PLACES, places);
+    lsSet(LS_HISTORY, archiveData);
+    refreshAll();
   }
 
   fetch('/api/places')
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      if (Array.isArray(data)) places = data;
-      places.forEach(function (p) {
-        if (p.inDay === undefined) p.inDay = false;
-      });
+      if (Array.isArray(data) && data.length) {
+        /* Garder la version la plus récente : comparer le nombre d'entrées */
+        if (data.length >= places.length) {
+          places = data;
+          places.forEach(function (p) { if (p.inDay === undefined) p.inDay = false; });
+        } else {
+          /* localStorage plus complet → repousser vers le serveur */
+          fetch('/api/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(places) }).catch(function(){});
+        }
+      } else if (places.length) {
+        /* Serveur vide mais localStorage non vide → restaurer */
+        fetch('/api/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(places) }).catch(function(){});
+      }
     })
     .catch(function () { })
-    .then(function () { loadedPlaces = true; checkDone(); });
+    .then(function () { syncedPlaces = true; checkSync(); });
 
   fetch('/api/history')
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      if (Array.isArray(data)) archiveData = data;
+      if (Array.isArray(data) && data.length) {
+        if (data.length >= archiveData.length) {
+          archiveData = data;
+        } else {
+          fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(archiveData) }).catch(function(){});
+        }
+      } else if (archiveData.length) {
+        fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(archiveData) }).catch(function(){});
+      }
     })
     .catch(function () { })
-    .then(function () { loadedHistory = true; checkDone(); });
+    .then(function () { syncedHistory = true; checkSync(); });
 }
 
 function saveHistory() {
+  lsSet(LS_HISTORY, archiveData);
   fetch('/api/history', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -93,6 +138,7 @@ function saveHistory() {
 }
 
 function save() {
+  lsSet(LS_PLACES, places);
   fetch('/api/places', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
