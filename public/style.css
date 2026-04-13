@@ -785,7 +785,9 @@ html, body {
 .dbtn:active { transform: scale(.97); }
 .dbtn-p { background: var(--ocean); color: #fff; }
 .dbtn-s { background: var(--palm); color: #fff; }
-.dbtn-d { background: #fee2e2; color: #dc2626; }
+.dbtn-d { background: #fee2e2; color: #dc2626; flex: 0 0 auto; padding: 13px 16px; }
+.dbtn-day { background: transparent; border: 1.5px solid var(--lagoon); color: var(--lagoon); }
+.dbtn-day.in-day { background: #fff8e1; border-color: var(--sun); color: var(--sun); }
 
 /* ── Category modal ── */
 

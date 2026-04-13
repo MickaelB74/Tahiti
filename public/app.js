@@ -774,12 +774,24 @@ function openDetail(id) {
     '<div class="drow">🏝️ Île : <strong style="margin-left:4px">' + p.island + '</strong></div></div>' +
     '<div class="dacts">' +
     '<a href="' + mapsUrl + '" target="_blank" rel="noopener" class="dbtn dbtn-p" style="text-decoration:none">🗺️ Ouvrir Maps</a>' +
+    '<button class="dbtn dbtn-day' + (p.inDay ? ' in-day' : '') + '" id="btn-dday">' +
+    (p.inDay ? '☀️ Dans la journée' : '+ Journée') + '</button>' +
     '<button class="dbtn dbtn-d" id="btn-dremove">🗑️</button></div></div>';
 
   document.getElementById('det-ov').classList.add('open');
   document.getElementById('det-sh').classList.add('open');
 
   document.getElementById('btn-dclose').addEventListener('click', closeDetail);
+  document.getElementById('btn-dday').addEventListener('click', function () {
+    var found = null;
+    for (var i = 0; i < places.length; i++) {
+      if (places[i].id === id) { places[i].inDay = !places[i].inDay; found = places[i]; break; }
+    }
+    save();
+    refreshAll();
+    showToast(found && found.inDay ? '☀️ Ajouté à la journée !' : 'Retiré de la journée');
+    openDetail(id);
+  });
   document.getElementById('btn-dremove').addEventListener('click', function () {
     places = places.filter(function (x) { return x.id !== id; });
     save();
