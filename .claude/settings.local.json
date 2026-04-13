@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -E \"\\\\.\\(json|js|html|tsx?|vue\\)$\")"
+      "Bash(grep -E \"\\\\.\\(json|js|html|tsx?|vue\\)$\")",
+      "Bash(npm install:*)",
+      "Bash(timeout 5 node server.js)"
     ]
   }
 }
