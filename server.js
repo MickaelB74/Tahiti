@@ -6,7 +6,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Data directory for server-side storage
-const DATA_DIR = path.join(__dirname, 'data');
+// In production (Render.com), DATA_DIR env var points to the persistent disk mount
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PLACES_FILE = path.join(DATA_DIR, 'places.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 
