@@ -1110,6 +1110,34 @@ html, body {
 
 .hclear-btn:active { transform: scale(.97); }
 
+/* ── Import/Export button in list header ── */
+
+.lhdr-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ie-btn {
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1.5px solid #e0e2e6;
+  background: var(--card);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+
+.ie-btn:active { transform: scale(.94); }
+
+.ie-export { background: var(--ocean); color: #fff; }
+.ie-import { background: var(--palm); color: #fff; }
+
 .hday-count {
   font-family: var(--font);
   font-size: 11px;

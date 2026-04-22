@@ -1125,6 +1125,50 @@ function closeConfirm() {
   confirmCallback = null;
 }
 
+/* ── Import / Export ── */
+
+function openIEPopup() {
+  document.getElementById('ie-ov').classList.add('open');
+  document.getElementById('ie-box').classList.add('open');
+}
+
+function closeIEPopup() {
+  document.getElementById('ie-ov').classList.remove('open');
+  document.getElementById('ie-box').classList.remove('open');
+}
+
+function exportPlaces() {
+  var json = JSON.stringify(places, null, 2);
+  var blob = new Blob([json], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'mes-lieux-tahiti.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  closeIEPopup();
+  showToast('✅ Export réussi !');
+}
+
+function importPlaces(file) {
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      if (!Array.isArray(data)) throw new Error('Format invalide');
+      places = data;
+      save();
+      refreshAll();
+      showToast('✅ ' + data.length + ' lieu(x) importé(s) !');
+    } catch (err) {
+      showToast('❌ Fichier invalide');
+    }
+  };
+  reader.readAsText(file);
+}
+
 /* ── Add custom place ── */
 
 function startAddCustom() {
@@ -1327,6 +1371,22 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('confirm-ok').addEventListener('click', function () {
     if (confirmCallback) confirmCallback();
     closeConfirm();
+  });
+
+  /* Import / Export */
+  document.getElementById('btn-ie').addEventListener('click', openIEPopup);
+  document.getElementById('btn-ie-close').addEventListener('click', closeIEPopup);
+  document.getElementById('ie-ov').addEventListener('click', closeIEPopup);
+  document.getElementById('btn-ie-export').addEventListener('click', exportPlaces);
+  document.getElementById('btn-ie-import').addEventListener('click', function () {
+    document.getElementById('ie-file').click();
+  });
+  document.getElementById('ie-file').addEventListener('change', function () {
+    if (this.files && this.files[0]) {
+      closeIEPopup();
+      importPlaces(this.files[0]);
+      this.value = '';
+    }
   });
 
   /* Overlay closes */
